@@ -3,6 +3,7 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instruction.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/Module.h>
 #include <llvm/IR/Use.h>
 #include <llvm/IR/Value.h>
 #include <llvm/Pass.h>
@@ -16,104 +17,94 @@ struct DFGPass : public FunctionPass {
 public:
   static char ID;
 
-  std::vector<std::pair<Value *, Value *>>
-      inst_edges; // 存储每条指令之间的先后执行顺序
-  std::vector<std::pair<Value *, Value *>> edges; // 存储data flow的边
-  std::vector<Value *> nodes;                     // 存储每条指令
+  std::vector<std::pair<Value *, Value *>> inst_edges; // 指令顺序边
+  std::vector<std::pair<Value *, Value *>> edges; // data flow边
+  std::vector<Value *> nodes; // 指令节点
   int num = 0;
 
   DFGPass() : FunctionPass(ID) {}
 
-  // 将指令的内容输出到string中去
-  std::string changeIns2Str(Instruction *ins) {
-    std::string temp_str;
-    raw_string_ostream os(temp_str);
-    ins->print(os);
-    return os.str();
-  }
-
   // 如果是变量则获得变量的名字，如果是指令则获得SSA编号
   std::string getValueName(Value *v) {
-    std::string result;
     if (!v) {
       return "undefined";
     }
+    std::string result;
     if (v->getName().empty()) {
-      result = "val" + std::to_string(num++);
+      result = std::to_string(num++);
     } else {
       result = v->getName().str();
     }
-    errs() << result;
     return result;
   }
 
   bool runOnFunction(Function &F) override {
-    std::error_code error;
-    enum sys::fs::OpenFlags F_None = sys::fs::OpenFlags::OF_Text;
-    std::string fileName(F.getName().str() + ".dot");
-    raw_fd_ostream file(fileName, error, F_None);
+    dbgs() << "DFGPass::runOnFunction: called on " << F.getName() << " @ "
+           << F.getParent()->getName() << ".\n";
 
-    errs() << "Hello\n";
+    std::error_code error_code;
+    sys::fs::OpenFlags flags = sys::fs::OpenFlags::OF_Text;
+    std::string fileName(F.getName().str() + ".dot");
+    raw_fd_ostream file(fileName, error_code, flags);
+
+    inst_edges.clear();
     edges.clear();
     nodes.clear();
-    inst_edges.clear();
 
-    for (auto BB = F.begin(), BEnd = F.end(); BB != BEnd; ++BB) {
-      BasicBlock *curBB = &*BB;
-      for (auto II = curBB->begin(), IEnd = curBB->end(); II != IEnd; ++II) {
-        Instruction *curII = &*II;
-        errs() << getValueName(curII) << "\n";
+    for (auto &BB : F) {
+      for (auto I = BB.begin(), E = BB.end(); I != E; ++I) {
+        Instruction *inst = &*I;
 
-        switch (curII->getOpcode()) {
-        // 由于load和store对内存进行操作，需要对load指令和stroe指令单独进行处理
+        // 去除bitwidth元数据
+        if (inst->getMetadata("bitwidth")) {
+          inst->setMetadata("bitwidth", nullptr);
+        }
+
+        switch (inst->getOpcode()) {
         case llvm::Instruction::Load: {
-          LoadInst *linst = dyn_cast<LoadInst>(curII);
-          Value *loadValPtr = linst->getPointerOperand();
-          edges.push_back({loadValPtr, curII});
+          LoadInst *loadInst = cast<LoadInst>(inst);
+          Value *loadValPtr = loadInst->getPointerOperand();
+          edges.push_back({loadValPtr, inst});
           break;
         }
 
         case llvm::Instruction::Store: {
-          StoreInst *sinst = dyn_cast<StoreInst>(curII);
-          Value *storeValPtr = sinst->getPointerOperand();
-          Value *storeVal = sinst->getValueOperand();
-          edges.push_back({storeVal, curII});
-          edges.push_back({curII, storeValPtr});
+          StoreInst *storeInst = dyn_cast<StoreInst>(inst);
+          Value *storeValPtr = storeInst->getPointerOperand();
+          Value *storeVal = storeInst->getValueOperand();
+          edges.push_back({storeVal, inst});
+          edges.push_back({inst, storeValPtr});
           break;
         }
 
         default: {
-          for (auto op = curII->op_begin(), opEnd = curII->op_end();
-               op != opEnd; ++op) {
-            if (dyn_cast<Instruction>(*op)) {
-              edges.push_back({op->get(), curII});
+          for (auto &op : inst->operands()) {
+            if (isa<Instruction>(op)) {
+              edges.push_back({op.get(), inst});
             }
           }
           break;
         }
         }
 
-        // errs() << curII << "\n";
-        nodes.push_back(curII);
-        auto next = II;
-        ++next;
-        if (next != IEnd) {
-          inst_edges.push_back({curII, &*next});
+        nodes.push_back(inst);
+        auto nextI = std::next(I);
+        if (nextI != E) {
+          inst_edges.push_back({inst, &*nextI});
         }
       }
 
-      Instruction *terminator = curBB->getTerminator();
-      for (auto sucBB : successors(curBB)) {
-        Instruction *first = &*(sucBB->begin());
-        inst_edges.push_back({terminator, first});
+      Instruction *terminator = BB.getTerminator();
+      for (auto sucBB : successors(&BB)) {
+        Instruction *firstInst = &*(sucBB->begin());
+        inst_edges.push_back({terminator, firstInst});
       }
     }
 
-    // errs() << "Write\n";
-    // errs() << "Write DFG\n";
+    dbgs() << "DFGPass::runOnFunction: dumping DFG to dot file.\n";
     file << "digraph \"DFG for '" + F.getName() + "\' function\" {\n";
-    // 将node节点dump
-    for (auto node : nodes) {
+    // dump node
+    for (auto &node : nodes) {
       if (auto *inst = dyn_cast<Instruction>(node)) {
         std::string s;
         raw_string_ostream os(s);
@@ -131,19 +122,17 @@ public:
              << getValueName(node) << "\"];\n";
       }
     }
-    // errs() << "Write Done\n";
 
-    // 将inst_edges边dump
-    for (auto edge : inst_edges) {
+    // dump inst_edges
+    for (auto &edge : inst_edges) {
       file << "\tNode" << edge.first << " -> Node" << edge.second << "\n";
     }
 
-    // 将data flow的边dump
+    // dump edges
     file << "edge [color=red]" << "\n";
-    for (auto edge : edges) {
+    for (auto &edge : edges) {
       file << "\tNode" << edge.first << " -> Node" << edge.second << "\n";
     }
-    errs() << "Write Done\n";
 
     file << "}\n";
     file.close();
