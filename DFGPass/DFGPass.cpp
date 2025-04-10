@@ -6,6 +6,7 @@
 #include <llvm/IR/Use.h>
 #include <llvm/IR/Value.h>
 #include <llvm/Pass.h>
+#include <llvm/Support/Debug.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/raw_ostream.h>
 
