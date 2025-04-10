@@ -10,7 +10,7 @@ cd "./test/output"
 opt-14 \
   -enable-new-pm=false \
   -load "../../build/DFGPass/libLLVMDFGPass.so" \
-  -strip \
+  -strip-debug \
   -DFGPass \
   "../../test/a.o.3.ll"
 python3 "../convert.py" "../../test/output"
