@@ -3,7 +3,7 @@ if [ -z "$1" ]; then
   exit 1
 fi
 
-llvm-dis-14 "./test/$1" -o "./test/a.o.3.ll"
+llvm-dis-12 "./test/$1" -o "./test/a.o.3.ll"
 sed -i '/target triple = "fpga64-xilinx-none"/d' "./test/a.o.3.ll"
 
 if [ -d "./test/output" ]; then
@@ -12,7 +12,7 @@ fi
 mkdir -p "./test/output"
 
 cd "./test/output"
-opt-14 \
+opt-12 \
   -enable-new-pm=false \
   -load "../../build/DFGPass/libLLVMDFGPass.so" \
   -strip-debug \
