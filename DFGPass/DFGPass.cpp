@@ -38,6 +38,22 @@ public:
     return result;
   }
 
+  std::string escape_braces(const std::string &input) {
+    std::string output;
+    output.reserve(
+        input.size() + std::count_if(input.begin(), input.end(), [](char c) {
+          return c == '{' || c == '}';
+        }));
+
+    for (char c : input) {
+      if (c == '{' || c == '}') {
+        output += '\\'; // 添加转义反斜杠
+      }
+      output += c; // 添加原字符
+    }
+    return output;
+  }
+
   bool runOnFunction(Function &F) override {
     dbgs() << "DFGPass::runOnFunction: called on " << F.getName() << " @ "
            << F.getParent()->getName() << ".\n";
@@ -115,8 +131,8 @@ public:
         } else {
           os << *inst;
         }
-        file << "\tNode" << node << "[shape=record, label=\"" << os.str()
-             << "\"];\n";
+        file << "\tNode" << node << "[shape=record, label=\""
+             << escape_braces(os.str()) << "\"];\n";
       } else {
         file << "\tNode" << node << "[shape=record, label=\""
              << getValueName(node) << "\"];\n";
